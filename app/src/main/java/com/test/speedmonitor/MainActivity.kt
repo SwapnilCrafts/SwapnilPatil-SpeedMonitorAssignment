@@ -1,5 +1,8 @@
 package com.test.speedmonitor
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -10,42 +13,63 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.tooling.preview.Preview
-import com.test.speedmonitor.model.Car
-import com.test.speedmonitor.model.RentalSession
-import com.test.speedmonitor.model.Renter
-import com.test.speedmonitor.service.FirebaseNotifier
-import com.test.speedmonitor.service.SpeedMonitorService
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.test.speedmonitor.ui.theme.SpeedMonitorTheme
 
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+
 class MainActivity : ComponentActivity() {
+
+    private val requestPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (!granted) {
+                // Optionally show message why it's needed
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
+
         setContent {
+            val viewModel: StepCounterViewModel = viewModel(
+                factory = StepCounterViewModelFactory(application)
+            )
+            val stepCount by viewModel.stepCount.collectAsState()
+
             SpeedMonitorTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Speed Monitor Assignment",
-                        modifier = Modifier.padding(innerPadding)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Steps Today", fontSize = 28.sp)
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(stepCount.toString(), fontSize = 48.sp)
+                        }
+                    }
                 }
-
-                val renter = Renter(id = "R1", name = "Swapnil Patil", maxSpeedLimit = 80)
-                val car = Car(id = "C1", licensePlate = "MH01AB1234")
-                val session = RentalSession(
-                    renter = renter,
-                    car = car,
-                    startTime = System.currentTimeMillis(),
-                    endTime = null,
-                    speedLimit = renter.maxSpeedLimit
-                )
-
-                val notifier = FirebaseNotifier()
-                val speedMonitorService = SpeedMonitorService(notifier)
-
-                val currentSpeed = 180
-                speedMonitorService.processSpeedUpdate(session, currentSpeed)
             }
         }
     }
@@ -57,6 +81,7 @@ fun Greeting(name: String, modifier: Modifier = Modifier) {
         text = name,
         modifier = modifier
     )
+
 }
 
 @Preview(showBackground = true)
