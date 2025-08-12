@@ -1,6 +1,4 @@
 package com.test.speedmonitor.db
-
-
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 

@@ -36,8 +36,18 @@ class StepCounterViewModel(application: Application) :
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     init {
-        // Load initial steps from preferences
-        _stepCount.value = prefs.getCurrentSteps()
+        val todayDate = getTodayDate()
+        val lastSavedDate = prefs.getLastSavedDate()
+
+        if (lastSavedDate == todayDate) {
+            // Same day → restore previous steps
+            previousTotalSteps = prefs.getPreviousTotalSteps()
+            _stepCount.value = prefs.getCurrentSteps()
+        } else {
+            // New day → set baseline after first sensor event
+            prefs.resetStepsForNewDay(0f, todayDate) // will be updated in first event
+        }
+
         registerStepSensor()
     }
 
@@ -50,16 +60,21 @@ class StepCounterViewModel(application: Application) :
     override fun onSensorChanged(event: SensorEvent?) {
         if (event?.sensor?.type == Sensor.TYPE_STEP_COUNTER) {
             val totalSteps = event.values[0]
+            val todayDate = getTodayDate()
 
-            if (previousTotalSteps == 0f) {
+            // If new day baseline is not set yet
+            if (prefs.getLastSavedDate() != todayDate || previousTotalSteps == 0f) {
+                prefs.resetStepsForNewDay(totalSteps, todayDate)
                 previousTotalSteps = totalSteps
+                _stepCount.value = 0
+                return
             }
 
             val stepsToday = (totalSteps - previousTotalSteps).toInt()
-
             if (stepsToday >= 0) {
                 _stepCount.value = stepsToday
                 prefs.saveCurrentSteps(stepsToday)
+                prefs.savePreviousTotalSteps(previousTotalSteps)
                 saveStepsToDb(stepsToday)
             }
         }
@@ -84,3 +99,4 @@ class StepCounterViewModel(application: Application) :
         sensorManager.unregisterListener(this)
     }
 }
+
