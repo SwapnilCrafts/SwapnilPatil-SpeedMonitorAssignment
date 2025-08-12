@@ -1,103 +1,86 @@
-package com.test.speedmonitor
+package com.test.speedmonitor.ui
 
 import android.app.Application
-import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
+import com.test.speedmonitor.db.AppDatabase
+import com.test.speedmonitor.db.StepEntity
+import com.test.speedmonitor.db.StepPreferences
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import androidx.datastore.preferences.core.*
-import androidx.datastore.preferences.preferencesDataStore
+import java.text.SimpleDateFormat
+import java.util.*
 
-private val Context.dataStore by preferencesDataStore(name = "step_prefs")
+class StepCounterViewModel(application: Application) :
+    AndroidViewModel(application), SensorEventListener {
 
+    private val stepDao = AppDatabase.getDatabase(application).stepDao()
+    private val prefs = StepPreferences(application)
 
-
-class StepCounterViewModel(app: Application) : AndroidViewModel(app), SensorEventListener {
-
-    private val context = app.applicationContext
-    private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    private val sensorManager =
+        application.getSystemService(Application.SENSOR_SERVICE) as SensorManager
     private val stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
 
-    private val PREF_KEY_BASE_STEPS = intPreferencesKey("base_steps")
-    private val PREF_KEY_LAST_STEP_COUNT = intPreferencesKey("last_step_count")
-
-    private var baseSteps = 0
+    private var previousTotalSteps = 0f
 
     private val _stepCount = MutableStateFlow(0)
-    val stepCount: StateFlow<Int> = _stepCount
+    val stepCount: StateFlow<Int> = _stepCount.asStateFlow()
+
+    val history: StateFlow<Map<String, Int>> = stepDao.getAllStepsFlow()
+        .map { list -> list.associate { it.date to it.steps } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     init {
-        viewModelScope.launch {
-            baseSteps = loadBaseStep()
-            val lastCount = loadLastStepCount()
-            _stepCount.value = lastCount
-            Log.d("StepCounter", "Loaded baseSteps: $baseSteps, lastStepCount: $lastCount")
+        // Load initial steps from preferences
+        _stepCount.value = prefs.getCurrentSteps()
+        registerStepSensor()
+    }
 
-            stepSensor?.let {
-                sensorManager.registerListener(this@StepCounterViewModel, it, SensorManager.SENSOR_DELAY_FASTEST)
-            }
+    private fun registerStepSensor() {
+        stepSensor?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
-        val totalSteps = event?.values?.get(0)?.toInt() ?: return
-        Log.d("StepCounter", "Sensor changed - totalSteps: $totalSteps, baseSteps: $baseSteps")
+        if (event?.sensor?.type == Sensor.TYPE_STEP_COUNTER) {
+            val totalSteps = event.values[0]
 
-        if (baseSteps == 0 || totalSteps < baseSteps) {
-            // First launch or device reboot/reset of step sensor
-            baseSteps = totalSteps
-            saveBaseStep(baseSteps)
-            Log.d("StepCounter", "Base step initialized/reset to $baseSteps")
+            if (previousTotalSteps == 0f) {
+                previousTotalSteps = totalSteps
+            }
+
+            val stepsToday = (totalSteps - previousTotalSteps).toInt()
+
+            if (stepsToday >= 0) {
+                _stepCount.value = stepsToday
+                prefs.saveCurrentSteps(stepsToday)
+                saveStepsToDb(stepsToday)
+            }
         }
+    }
 
-        val steps = totalSteps - baseSteps
-        Log.d("StepCounter", "Calculated steps: $steps, Previous stepCount: ${_stepCount.value}")
-
-        if (_stepCount.value != steps) {
-            _stepCount.value = steps
-            saveLastStepCount(steps)
-            Log.d("StepCounter", "StepCount updated to $steps")
+    private fun saveStepsToDb(stepsToday: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val todayDate = getTodayDate()
+            stepDao.insert(StepEntity(todayDate, stepsToday))
         }
+    }
+
+    private fun getTodayDate(): String {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        return sdf.format(Date())
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    private suspend fun loadBaseStep(): Int {
-        val prefs = context.dataStore.data.first()
-        return prefs[PREF_KEY_BASE_STEPS] ?: 0
-    }
-
-    private suspend fun loadLastStepCount(): Int {
-        val prefs = context.dataStore.data.first()
-        return prefs[PREF_KEY_LAST_STEP_COUNT] ?: 0
-    }
-
-    private fun saveBaseStep(steps: Int) {
-        viewModelScope.launch {
-            context.dataStore.edit {
-                it[PREF_KEY_BASE_STEPS] = steps
-            }
-        }
-    }
-
-    private fun saveLastStepCount(count: Int) {
-        viewModelScope.launch {
-            context.dataStore.edit {
-                it[PREF_KEY_LAST_STEP_COUNT] = count
-            }
-        }
-    }
-
     override fun onCleared() {
-        sensorManager.unregisterListener(this)
         super.onCleared()
+        sensorManager.unregisterListener(this)
     }
 }
