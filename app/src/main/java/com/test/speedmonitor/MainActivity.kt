@@ -65,7 +65,7 @@ class MainActivity : ComponentActivity() {
 
         // 🔹 Run immediately once for testing
         val testWorkRequest = OneTimeWorkRequestBuilder<DailySaveWorker>().build()
-        WorkManager.getInstance(this).enqueue(testWorkRequest)
+       WorkManager.getInstance(this).enqueue(testWorkRequest)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
