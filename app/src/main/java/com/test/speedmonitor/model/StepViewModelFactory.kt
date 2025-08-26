@@ -1,8 +1,7 @@
-package com.test.speedmonitor
+package com.test.speedmonitor.model
 import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import com.test.speedmonitor.ui.StepCounterViewModel
 
 class StepCounterViewModelFactory(private val app: Application) : ViewModelProvider.AndroidViewModelFactory(app) {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {

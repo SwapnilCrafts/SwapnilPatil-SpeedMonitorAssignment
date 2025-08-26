@@ -1,8 +1,7 @@
 package com.test.speedmonitor
 
 import android.content.Context
-import android.hardware.Sensor
-import android.hardware.SensorManager
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.test.speedmonitor.db.AppDatabase
@@ -13,57 +12,72 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
-class DailySaveWorker(
-    val context: Context,
-    workerParams: WorkerParameters
-) : CoroutineWorker(context, workerParams) {
+class DailySaveWorker(appContext: Context, workerParams: WorkerParameters) :
+    CoroutineWorker(appContext, workerParams) {
 
-    private val stepDao = AppDatabase.getDatabase(context).stepDao()
-    private val prefs = StepPreferences(context)
+    private val prefs = StepPreferences(appContext)
+    private val stepDao = AppDatabase.getDatabase(appContext).stepDao()
+    private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
-    override suspend fun doWork(): Result {
-        return withContext(Dispatchers.IO) {
-            try {
-                val today = getTodayDate()
-                val todaySteps = prefs.getCurrentSteps()
+    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        try {
+            val todayDate = dateFormat.format(Date())
+            val lastSavedDate = prefs.getLastSavedDate()
+            val todaySteps = prefs.getCurrentSteps()
+            val previousTotal = prefs.getPreviousTotalSteps()
 
-                // 1. Save today's steps to DB
-                stepDao.insert(StepEntity(date = today, steps = todaySteps))
+            Log.d("DailySaveWorker", "▶ Running worker for $todayDate, last saved=$lastSavedDate")
 
-                // 2. Get the current device lifetime steps from the sensor
-                val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-                val stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-
-                var totalStepsFromSensor = 0f
-                if (stepSensor != null) {
-                    // Use direct listener to fetch current total steps quickly
-                    val listener = object : android.hardware.SensorEventListener {
-                        override fun onSensorChanged(event: android.hardware.SensorEvent) {
-                            if (event.sensor.type == Sensor.TYPE_STEP_COUNTER) {
-                                totalStepsFromSensor = event.values[0]
-                                sensorManager.unregisterListener(this)
-                            }
-                        }
-                        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-                    }
-                    sensorManager.registerListener(listener, stepSensor, SensorManager.SENSOR_DELAY_NORMAL)
-                    // Give sensor a moment to respond
-                    Thread.sleep(200)
-                }
-
-                // 3. Reset preferences for the new day
-                prefs.resetStepsForNewDay(totalStepsFromSensor, today)
-
-                Result.success()
-            } catch (e: Exception) {
-                e.printStackTrace()
-                Result.failure()
+            // Case 1: First ever run
+            if (lastSavedDate.isEmpty()) {
+                stepDao.insert(StepEntity(todayDate, todaySteps))
+                prefs.resetStepsForNewDay(previousTotal, todayDate)
+                Log.d("DailySaveWorker", " First run → saved $todaySteps for $todayDate")
+                return@withContext Result.success()
             }
-        }
-    }
 
-    private fun getTodayDate(): String {
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        return sdf.format(Date())
+            // Calculate gap days
+            val lastDate = dateFormat.parse(lastSavedDate)!!
+            val today = dateFormat.parse(todayDate)!!
+            val diffDays = ((today.time - lastDate.time) / (1000 * 60 * 60 * 24)).toInt()
+
+            if (diffDays == 0) {
+                // Already saved today → just ignore
+                Log.d("DailySaveWorker", "✔ Already saved for today ($todayDate). Skipping.")
+                return@withContext Result.success()
+            }
+
+            // Case 2: Missed some days → reconstruct
+            if (diffDays > 1) {
+                Log.d("DailySaveWorker", "⚠ Missed $diffDays days, reconstructing history...")
+
+                // Steps since last save
+                val totalSinceLast = todaySteps
+                val avgSteps = if (diffDays > 0) totalSinceLast / diffDays else 0
+
+                val calendar = Calendar.getInstance().apply { time = lastDate }
+
+                for (i in 1..diffDays) {
+                    calendar.add(Calendar.DAY_OF_YEAR, 1)
+                    val missingDate = dateFormat.format(calendar.time)
+
+                    val stepsForDay = if (i < diffDays) avgSteps else (totalSinceLast - avgSteps * (diffDays - 1))
+                    stepDao.insert(StepEntity(missingDate, stepsForDay))
+                    Log.d("DailySaveWorker", "📝 Recovered $stepsForDay steps for $missingDate")
+                }
+            } else {
+                // Normal case: just save today
+                stepDao.insert(StepEntity(todayDate, todaySteps))
+                Log.d("DailySaveWorker", "✅ Saved $todaySteps steps for $todayDate")
+            }
+
+            // Reset prefs for new day
+            prefs.resetStepsForNewDay(previousTotal, todayDate)
+
+            return@withContext Result.success()
+        } catch (e: Exception) {
+            Log.e("DailySaveWorker", "❌ Error: ${e.message}", e)
+            return@withContext Result.failure()
+        }
     }
 }

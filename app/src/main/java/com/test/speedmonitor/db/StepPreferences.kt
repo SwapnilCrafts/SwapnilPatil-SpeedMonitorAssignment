@@ -5,7 +5,6 @@ import android.content.Context
 
 class StepPreferences(context: Context) {
     private val prefs = context.getSharedPreferences("step_prefs", Context.MODE_PRIVATE)
-
     fun saveCurrentSteps(steps: Int) {
         prefs.edit().putInt("current_steps", steps).apply()
     }
@@ -14,27 +13,23 @@ class StepPreferences(context: Context) {
         return prefs.getInt("current_steps", 0)
     }
 
-    fun savePreviousTotalSteps(totalSteps: Float) {
-        prefs.edit().putFloat("previous_total_steps", totalSteps).apply()
+    fun savePreviousTotalSteps(total: Float) {
+        prefs.edit().putFloat("previous_total", total).apply()
     }
 
     fun getPreviousTotalSteps(): Float {
-        return prefs.getFloat("previous_total_steps", 0f)
+        return prefs.getFloat("previous_total", 0f)
     }
 
-    fun saveLastSavedDate(date: String) {
-        prefs.edit().putString("last_saved_date", date).apply()
+    fun getLastSavedDate(): String {
+        return prefs.getString("last_date", "") ?: ""
     }
 
-    fun getLastSavedDate(): String? {
-        return prefs.getString("last_saved_date", null)
-    }
-
-    fun resetStepsForNewDay(totalSteps: Float, date: String) {
+    fun resetStepsForNewDay(baseline: Float, todayDate: String) {
         prefs.edit()
-            .putFloat("previous_total_steps", totalSteps)
+            .putFloat("previous_total", baseline)
             .putInt("current_steps", 0)
-            .putString("last_saved_date", date)
+            .putString("last_date", todayDate)
             .apply()
     }
 }

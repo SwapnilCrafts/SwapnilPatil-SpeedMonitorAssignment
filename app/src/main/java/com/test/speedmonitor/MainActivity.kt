@@ -1,9 +1,14 @@
 package com.test.speedmonitor
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,25 +26,46 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.test.speedmonitor.ui.StepCounterViewModel
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import com.test.speedmonitor.model.StepCounterViewModel
+import com.test.speedmonitor.model.StepCounterViewModelFactory
 import com.test.speedmonitor.ui.theme.SpeedMonitorTheme
+import java.util.Calendar
+import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
-
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (!granted) {
                 // Optionally show a message
             }
         }
+    private fun checkAndRequestBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(PowerManager::class.java)
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                intent.data = Uri.parse("package:$packageName")
+                startActivity(intent)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        scheduleDailyStepSave(this)
+
+        // 🔹 Run immediately once for testing
+        val testWorkRequest = OneTimeWorkRequestBuilder<DailySaveWorker>().build()
+        WorkManager.getInstance(this).enqueue(testWorkRequest)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
@@ -48,6 +74,7 @@ class MainActivity : ComponentActivity() {
             requestPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
         }
 
+        checkAndRequestBatteryOptimization()
         setContent {
             val viewModel: StepCounterViewModel = viewModel(
                 factory = StepCounterViewModelFactory(application)
@@ -153,4 +180,30 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
+
+private fun scheduleDailyStepSave(context: Context) {
+    val initialDelay = calculateInitialDelayUntilMidnight()
+
+    val dailyWorkRequest = PeriodicWorkRequestBuilder<DailySaveWorker>(1, TimeUnit.DAYS)
+        .setInitialDelay(initialDelay, TimeUnit.MILLISECONDS)
+        .build()
+
+    WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+        "DailyStepSave",
+        ExistingPeriodicWorkPolicy.KEEP,
+        dailyWorkRequest
+    )
+}
+
+private fun calculateInitialDelayUntilMidnight(): Long {
+    val now = Calendar.getInstance()
+    val midnight = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+        add(Calendar.DAY_OF_YEAR, 1) // next midnight
+    }
+    return midnight.timeInMillis - now.timeInMillis
 }
