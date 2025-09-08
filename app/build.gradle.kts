@@ -62,7 +62,11 @@ dependencies {
     implementation("androidx.compose.runtime:runtime-livedata:1.6.3")
     implementation("androidx.compose.runtime:runtime:1.6.3")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation("com.waseemsabir:betterypermissionhelper:1.0.3")
+
     implementation("androidx.room:room-runtime:${room_version}")
     ksp("androidx.room:room-compiler:$room_version")
+
+    implementation("com.google.android.gms:play-services-location:21.2.0")
 
 }

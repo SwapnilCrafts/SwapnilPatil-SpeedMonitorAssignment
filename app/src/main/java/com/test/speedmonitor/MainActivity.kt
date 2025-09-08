@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -57,15 +58,30 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    private fun requestIgnoreBatteryOptimizations(context: Context) {
+        val packageName = context.packageName
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+
+        if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+            intent.data = Uri.parse("package:$packageName")
+            context.startActivity(intent)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        scheduleDailyStepSave(this)
+        requestIgnoreBatteryOptimizations(this)
 
-        // 🔹 Run immediately once for testing
-        val testWorkRequest = OneTimeWorkRequestBuilder<DailySaveWorker>().build()
-       WorkManager.getInstance(this).enqueue(testWorkRequest)
+        val workManager = WorkManager.getInstance(this)
+        val request = OneTimeWorkRequestBuilder<DailySaveWorker>().build()
+
+        workManager.enqueueUniqueWork(
+            "dailySaveWork",
+            ExistingWorkPolicy.KEEP, // Don’t start multiple copies
+            request
+        )
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
@@ -99,7 +115,6 @@ class MainActivity : ComponentActivity() {
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Spacer(Modifier.height(40.dp))
-
                         Text(
                             text = "Steps Today",
                             fontSize = 28.sp,
@@ -182,28 +197,3 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun scheduleDailyStepSave(context: Context) {
-    val initialDelay = calculateInitialDelayUntilMidnight()
-
-    val dailyWorkRequest = PeriodicWorkRequestBuilder<DailySaveWorker>(1, TimeUnit.DAYS)
-        .setInitialDelay(initialDelay, TimeUnit.MILLISECONDS)
-        .build()
-
-    WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-        "DailyStepSave",
-        ExistingPeriodicWorkPolicy.KEEP,
-        dailyWorkRequest
-    )
-}
-
-private fun calculateInitialDelayUntilMidnight(): Long {
-    val now = Calendar.getInstance()
-    val midnight = Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY, 0)
-        set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-        add(Calendar.DAY_OF_YEAR, 1) // next midnight
-    }
-    return midnight.timeInMillis - now.timeInMillis
-}
